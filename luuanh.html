@@ -1,0 +1,195 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Kho lưu trữ ảnh (localStorage)</title>
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      text-align: center;
+      background-color: #f0f0f0;
+    }
+
+    form {
+      margin: 20px;
+    }
+
+    #pasteZone {
+      max-width: 680px;
+      margin: 20px auto 12px;
+      padding: 34px 20px;
+      border: 2px dashed #1d72d8;
+      border-radius: 14px;
+      color: #185ca8;
+      background: #eef7ff;
+      cursor: pointer;
+      outline: none;
+      transition: background-color 0.2s, border-color 0.2s, transform 0.2s;
+    }
+
+    #pasteZone:hover,
+    #pasteZone:focus,
+    #pasteZone.is-pasting {
+      background: #dceeff;
+      border-color: #075ebd;
+      transform: translateY(-1px);
+    }
+
+    #pasteZone strong {
+      display: block;
+      margin-bottom: 8px;
+      font-size: 20px;
+    }
+
+    #status {
+      min-height: 24px;
+      margin: 8px 16px;
+      font-weight: 600;
+    }
+
+    #status.success {
+      color: #147d33;
+    }
+
+    #status.error {
+      color: #c62828;
+    }
+
+    #gallery {
+      display: flex;
+      flex-wrap: wrap;
+      justify-content: center;
+      margin-top: 20px;
+    }
+
+    #gallery img {
+      width: 200px;
+      margin: 10px;
+      border-radius: 8px;
+      box-shadow: 0 2px 5px rgba(0,0,0,0.3);
+    }
+  </style>
+</head>
+<body>
+  <h1>Kho lưu trữ hình ảnh (LocalStorage)</h1>
+  <div id="pasteZone" tabindex="0" role="button" aria-label="Dán ảnh hoặc chọn tệp">
+    <strong>Dán ảnh nhanh bằng Ctrl + V</strong>
+    Copy ảnh hoặc chụp màn hình rồi dán vào đây. Bạn cũng có thể bấm vào vùng này để chọn tệp.
+  </div>
+
+  <form id="uploadForm">
+    <input type="file" id="imageInput" accept="image/*" multiple />
+    <button type="submit">Lưu ảnh đã chọn</button>
+  </form>
+
+  <div id="status" role="status" aria-live="polite"></div>
+
+  <div id="gallery"></div>
+
+  <script>
+    // Hiển thị ảnh đã lưu trong localStorage khi tải trang
+    function loadImages() {
+      const gallery = document.getElementById('gallery');
+      gallery.innerHTML = '';
+
+      const images = JSON.parse(localStorage.getItem('images') || '[]');
+      images.forEach(src => {
+        const img = document.createElement('img');
+        img.src = src;
+        gallery.appendChild(img);
+      });
+    }
+
+    const fileInput = document.getElementById('imageInput');
+    const pasteZone = document.getElementById('pasteZone');
+    const status = document.getElementById('status');
+
+    function showStatus(message, type) {
+      status.textContent = message;
+      status.className = type || '';
+    }
+
+    function readFileAsDataURL(file) {
+      return new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = event => resolve(event.target.result);
+        reader.onerror = () => reject(new Error('Không thể đọc ảnh.'));
+        reader.readAsDataURL(file);
+      });
+    }
+
+    // Dùng chung cho ảnh được chọn từ máy và ảnh dán từ clipboard.
+    async function saveImageFiles(fileList) {
+      const files = Array.from(fileList).filter(file => file.type.startsWith('image/'));
+      if (!files.length) {
+        showStatus('Clipboard hoặc tệp đã chọn không có ảnh.', 'error');
+        return;
+      }
+
+      showStatus(`Đang lưu ${files.length} ảnh...`);
+
+      try {
+        const newImages = await Promise.all(files.map(readFileAsDataURL));
+        const images = JSON.parse(localStorage.getItem('images') || '[]');
+        images.push(...newImages);
+        localStorage.setItem('images', JSON.stringify(images));
+        loadImages();
+        showStatus(`Đã lưu ${files.length} ảnh thành công.`, 'success');
+      } catch (error) {
+        const quotaExceeded = error && (
+          error.name === 'QuotaExceededError' ||
+          error.name === 'NS_ERROR_DOM_QUOTA_REACHED'
+        );
+        showStatus(
+          quotaExceeded
+            ? 'Bộ nhớ trình duyệt đã đầy. Hãy xóa bớt ảnh cũ rồi thử lại.'
+            : 'Không thể lưu ảnh. Vui lòng thử lại.',
+          'error'
+        );
+      }
+    }
+
+    // Xử lý ảnh chọn từ máy.
+    document.getElementById('uploadForm').addEventListener('submit', async function (e) {
+      e.preventDefault();
+      if (!fileInput.files.length) {
+        showStatus('Hãy chọn ít nhất một ảnh.', 'error');
+        return;
+      }
+      await saveImageFiles(fileInput.files);
+      fileInput.value = '';
+    });
+
+    // Bấm vào vùng dán vẫn có thể mở hộp chọn tệp như bình thường.
+    pasteZone.addEventListener('click', () => fileInput.click());
+    pasteZone.addEventListener('keydown', event => {
+      if (event.key === 'Enter' || event.key === ' ') {
+        event.preventDefault();
+        fileInput.click();
+      }
+    });
+
+    // Cho phép dán ảnh ở bất kỳ vị trí nào trên trang bằng Ctrl+V.
+    document.addEventListener('paste', async event => {
+      const clipboardData = event.clipboardData;
+      if (!clipboardData) return;
+
+      const imageFiles = Array.from(clipboardData.items || [])
+        .filter(item => item.kind === 'file' && item.type.startsWith('image/'))
+        .map(item => item.getAsFile())
+        .filter(Boolean);
+
+      if (!imageFiles.length) return;
+
+      event.preventDefault();
+      pasteZone.classList.add('is-pasting');
+      await saveImageFiles(imageFiles);
+      pasteZone.classList.remove('is-pasting');
+    });
+
+    // Tải ảnh khi mở trang
+    loadImages();
+  </script>
+</body>
+</html>

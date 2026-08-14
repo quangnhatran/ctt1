@@ -1,0 +1,150 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Giải Phương Trình Bậc 1 & Bậc 2</title>
+    <link rel="stylesheet" href="styles.css">
+    <style>
+        * {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+}
+
+body {
+    font-family: Arial, sans-serif;
+    background-color: #f4f4f9;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    height: 100vh;
+}
+
+.container {
+    width: 90%;
+    max-width: 600px;
+    background-color: #fff;
+    padding: 20px;
+    border-radius: 8px;
+    box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+}
+
+h1 {
+    text-align: center;
+    margin-bottom: 20px;
+}
+
+.form-section {
+    margin-bottom: 30px;
+}
+
+h2 {
+    margin-bottom: 10px;
+}
+
+label {
+    display: block;
+    margin-bottom: 5px;
+}
+
+input {
+    width: 100%;
+    padding: 10px;
+    margin-bottom: 10px;
+    border: 1px solid #ddd;
+    border-radius: 4px;
+}
+
+button {
+    width: 100%;
+    padding: 10px;
+    background-color: #4CAF50;
+    color: #fff;
+    border: none;
+    border-radius: 4px;
+    cursor: pointer;
+}
+
+button:hover {
+    background-color: #45a049;
+}
+
+p {
+    font-weight: bold;
+    color: #333;
+}
+
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>Giải Phương Trình Bậc 1 & Bậc 2</h1>
+
+        <div class="form-section">
+            <h2>Phương Trình Bậc 1</h2>
+            <label for="a1">Nhập a (a*x + b = 0):</label>
+            <input type="number" id="a1" placeholder="Nhập a" required>
+            <label for="b1">Nhập b:</label>
+            <input type="number" id="b1" placeholder="Nhập b" required>
+            <button onclick="solveLinear()">Giải Phương Trình Bậc 1</button>
+            <p id="result1"></p>
+        </div>
+
+        <div class="form-section">
+            <h2>Phương Trình Bậc 2</h2>
+            <label for="a2">Nhập a (a*x² + b*x + c = 0):</label>
+            <input type="number" id="a2" placeholder="Nhập a" required>
+            <label for="b2">Nhập b:</label>
+            <input type="number" id="b2" placeholder="Nhập b" required>
+            <label for="c2">Nhập c:</label>
+            <input type="number" id="c2" placeholder="Nhập c" required>
+            <button onclick="solveQuadratic()">Giải Phương Trình Bậc 2</button>
+            <p id="result2"></p>
+        </div>
+    </div>
+    <script>
+        // Giải phương trình bậc 1: a*x + b = 0
+function solveLinear() {
+    const a = parseFloat(document.getElementById('a1').value);
+    const b = parseFloat(document.getElementById('b1').value);
+
+    if (a === 0) {
+        if (b === 0) {
+            document.getElementById('result1').innerHTML = 'Phương trình vô số nghiệm.';
+        } else {
+            document.getElementById('result1').innerHTML = 'Phương trình vô nghiệm.';
+        }
+    } else {
+        const result = -b / a;
+        document.getElementById('result1').innerHTML = `Nghiệm của phương trình là: x = ${result}`;
+    }
+}
+
+// Giải phương trình bậc 2: a*x² + b*x + c = 0
+function solveQuadratic() {
+    const a = parseFloat(document.getElementById('a2').value);
+    const b = parseFloat(document.getElementById('b2').value);
+    const c = parseFloat(document.getElementById('c2').value);
+
+    if (a === 0) {
+        document.getElementById('result2').innerHTML = 'Đây không phải phương trình bậc 2.';
+    } else {
+        const discriminant = b * b - 4 * a * c;
+
+        if (discriminant > 0) {
+            const x1 = (-b + Math.sqrt(discriminant)) / (2 * a);
+            const x2 = (-b - Math.sqrt(discriminant)) / (2 * a);
+            document.getElementById('result2').innerHTML = `Phương trình có 2 nghiệm phân biệt: x1 = ${x1}, x2 = ${x2}`;
+        } else if (discriminant === 0) {
+            const x = -b / (2 * a);
+            document.getElementById('result2').innerHTML = `Phương trình có nghiệm kép: x = ${x}`;
+        } else {
+            document.getElementById('result2').innerHTML = 'Phương trình vô nghiệm.';
+        }
+    }
+}
+
+    </script>
+</body>
+</html>
