@@ -1,0 +1,611 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Kho lưu trữ ảnh</title>
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      text-align: center;
+      background-color: #f0f0f0;
+    }
+
+    form {
+      margin: 20px;
+    }
+
+    #pasteZone {
+      max-width: 680px;
+      margin: 20px auto 12px;
+      padding: 34px 20px;
+      border: 2px dashed #1d72d8;
+      border-radius: 14px;
+      color: #185ca8;
+      background: #eef7ff;
+      cursor: pointer;
+      outline: none;
+      transition: background-color 0.2s, border-color 0.2s, transform 0.2s;
+    }
+
+    #pasteZone:hover,
+    #pasteZone:focus,
+    #pasteZone.is-pasting {
+      background: #dceeff;
+      border-color: #075ebd;
+      transform: translateY(-1px);
+    }
+
+    #pasteZone strong {
+      display: block;
+      margin-bottom: 8px;
+      font-size: 20px;
+    }
+
+    #status {
+      min-height: 24px;
+      margin: 8px 16px;
+      font-weight: 600;
+    }
+
+    #status.success {
+      color: #147d33;
+    }
+
+    #status.error {
+      color: #c62828;
+    }
+
+    #storageControls {
+      max-width: 680px;
+      margin: 16px auto;
+      padding: 16px 20px;
+      border: 1px solid #c9d8e8;
+      border-radius: 12px;
+      background: #fff;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.08);
+    }
+
+    #chooseFolderButton {
+      padding: 10px 18px;
+      border: 0;
+      border-radius: 8px;
+      color: #fff;
+      background: #147d33;
+      font-size: 16px;
+      font-weight: 700;
+      cursor: pointer;
+    }
+
+    #chooseFolderButton:hover {
+      background: #0f6829;
+    }
+
+    #chooseFolderButton:disabled {
+      background: #888;
+      cursor: not-allowed;
+    }
+
+    #storageMode {
+      margin-top: 10px;
+      color: #555;
+      line-height: 1.5;
+    }
+
+    #storageMode.unlimited {
+      color: #147d33;
+      font-weight: 700;
+    }
+
+    #gallery {
+      display: flex;
+      flex-wrap: wrap;
+      justify-content: center;
+      margin-top: 20px;
+    }
+
+    #gallery img {
+      width: 200px;
+      margin: 10px;
+      border-radius: 8px;
+      box-shadow: 0 2px 5px rgba(0,0,0,0.3);
+    }
+  </style>
+</head>
+<body>
+  <h1>Kho lưu trữ hình ảnh</h1>
+  <div id="storageControls">
+    <button type="button" id="chooseFolderButton">Chọn thư mục lưu ảnh không giới hạn</button>
+    <div id="storageMode">Chưa chọn thư mục — đang dùng bộ nhớ trình duyệt tạm thời.</div>
+  </div>
+
+  <div id="pasteZone" tabindex="0" role="button" aria-label="Dán ảnh hoặc chọn tệp">
+    <strong>Dán ảnh nhanh bằng Ctrl + V</strong>
+    Copy ảnh hoặc chụp màn hình rồi dán vào đây. Bạn cũng có thể bấm vào vùng này để chọn tệp.
+  </div>
+
+  <form id="uploadForm">
+    <input type="file" id="imageInput" accept="image/*" multiple />
+    <button type="submit">Lưu ảnh đã chọn</button>
+  </form>
+
+  <div id="status" role="status" aria-live="polite"></div>
+
+  <div id="gallery"></div>
+
+  <script>
+    const fileInput = document.getElementById('imageInput');
+    const pasteZone = document.getElementById('pasteZone');
+    const status = document.getElementById('status');
+    const gallery = document.getElementById('gallery');
+    const chooseFolderButton = document.getElementById('chooseFolderButton');
+    const storageMode = document.getElementById('storageMode');
+    const databaseName = 'imageGalleryDB';
+    const storeName = 'images';
+    const settingsStoreName = 'settings';
+    let databasePromise;
+    let initializationPromise;
+    let displayedObjectUrls = [];
+    let rememberedDirectoryHandle = null;
+    let activeDirectoryHandle = null;
+
+    function showStatus(message, type) {
+      status.textContent = message;
+      status.className = type || '';
+    }
+
+    function requestAsPromise(request) {
+      return new Promise((resolve, reject) => {
+        request.onsuccess = () => resolve(request.result);
+        request.onerror = () => reject(request.error);
+      });
+    }
+
+    function transactionAsPromise(transaction) {
+      return new Promise((resolve, reject) => {
+        transaction.oncomplete = () => resolve();
+        transaction.onerror = () => reject(transaction.error);
+        transaction.onabort = () => reject(transaction.error || new Error('Giao dịch đã bị hủy.'));
+      });
+    }
+
+    function openDatabase() {
+      if (databasePromise) return databasePromise;
+
+      databasePromise = new Promise((resolve, reject) => {
+        const request = indexedDB.open(databaseName, 2);
+
+        request.onupgradeneeded = () => {
+          const database = request.result;
+          if (!database.objectStoreNames.contains(storeName)) {
+            database.createObjectStore(storeName, { keyPath: 'id', autoIncrement: true });
+          }
+          if (!database.objectStoreNames.contains(settingsStoreName)) {
+            database.createObjectStore(settingsStoreName, { keyPath: 'key' });
+          }
+        };
+
+        request.onsuccess = () => {
+          request.result.onversionchange = () => request.result.close();
+          resolve(request.result);
+        };
+        request.onerror = () => {
+          databasePromise = null;
+          reject(request.error);
+        };
+      });
+
+      return databasePromise;
+    }
+
+    async function getSetting(key) {
+      const database = await openDatabase();
+      const transaction = database.transaction(settingsStoreName, 'readonly');
+      const transactionDone = transactionAsPromise(transaction);
+      const record = await requestAsPromise(transaction.objectStore(settingsStoreName).get(key));
+      await transactionDone;
+      return record ? record.value : null;
+    }
+
+    async function setSetting(key, value) {
+      const database = await openDatabase();
+      const transaction = database.transaction(settingsStoreName, 'readwrite');
+      const transactionDone = transactionAsPromise(transaction);
+      transaction.objectStore(settingsStoreName).put({ key, value });
+      await transactionDone;
+    }
+
+    async function verifyDirectoryPermission(directoryHandle, requestAccess) {
+      if (!directoryHandle) return false;
+
+      try {
+        const options = { mode: 'readwrite' };
+        if (await directoryHandle.queryPermission(options) === 'granted') return true;
+        if (requestAccess && await directoryHandle.requestPermission(options) === 'granted') return true;
+      } catch (error) {
+        return false;
+      }
+
+      return false;
+    }
+
+    function updateStorageMode() {
+      storageMode.className = '';
+
+      if (!('showDirectoryPicker' in window)) {
+        chooseFolderButton.disabled = true;
+        chooseFolderButton.textContent = 'Trình duyệt không hỗ trợ chọn thư mục';
+        storageMode.textContent = 'Hãy dùng Chrome hoặc Edge trên máy tính để bật chế độ lưu theo ổ cứng.';
+        return;
+      }
+
+      chooseFolderButton.disabled = false;
+      if (activeDirectoryHandle) {
+        chooseFolderButton.textContent = 'Đổi thư mục lưu ảnh';
+        storageMode.textContent = `Đang lưu trực tiếp vào thư mục “${activeDirectoryHandle.name}” — giới hạn theo dung lượng ổ cứng.`;
+        storageMode.className = 'unlimited';
+      } else if (rememberedDirectoryHandle) {
+        chooseFolderButton.textContent = 'Cấp quyền lại hoặc đổi thư mục';
+        storageMode.textContent = 'Trình duyệt cần bạn cấp lại quyền truy cập thư mục lưu ảnh.';
+      } else {
+        chooseFolderButton.textContent = 'Chọn thư mục lưu ảnh không giới hạn';
+        storageMode.textContent = 'Chưa chọn thư mục — đang dùng bộ nhớ trình duyệt tạm thời.';
+      }
+    }
+
+    function renderImages(images) {
+      displayedObjectUrls.forEach(url => URL.revokeObjectURL(url));
+      displayedObjectUrls = [];
+      gallery.innerHTML = '';
+
+      images.forEach(image => {
+        if (!(image.blob instanceof Blob)) return;
+
+        const imageUrl = URL.createObjectURL(image.blob);
+        displayedObjectUrls.push(imageUrl);
+
+        const img = document.createElement('img');
+        img.src = imageUrl;
+        img.alt = image.name || 'Ảnh đã lưu';
+        img.title = image.name || '';
+        img.loading = 'lazy';
+        img.decoding = 'async';
+        gallery.appendChild(img);
+      });
+    }
+
+    async function getBrowserImages() {
+      const database = await openDatabase();
+      const transaction = database.transaction(storeName, 'readonly');
+      const transactionDone = transactionAsPromise(transaction);
+      const images = await requestAsPromise(transaction.objectStore(storeName).getAll());
+      await transactionDone;
+      return images;
+    }
+
+    function isImageFile(file) {
+      return file.type.startsWith('image/') || /\.(png|jpe?g|gif|webp|bmp|svg|avif|heic|heif)$/i.test(file.name);
+    }
+
+    async function loadImagesFromDirectory() {
+      const images = [];
+
+      for await (const entry of activeDirectoryHandle.values()) {
+        if (entry.kind !== 'file') continue;
+        const file = await entry.getFile();
+        if (!isImageFile(file)) continue;
+        images.push({ blob: file, name: file.name, createdAt: file.lastModified });
+      }
+
+      images.sort((a, b) => b.createdAt - a.createdAt);
+      renderImages(images);
+    }
+
+    async function loadImages() {
+      if (activeDirectoryHandle) {
+        const canAccessDirectory = await verifyDirectoryPermission(activeDirectoryHandle, false);
+        if (canAccessDirectory) {
+          await loadImagesFromDirectory();
+          return;
+        }
+
+        activeDirectoryHandle = null;
+        updateStorageMode();
+      }
+
+      renderImages(await getBrowserImages());
+    }
+
+    // Tự chuyển ảnh từng lưu bằng localStorage sang IndexedDB, rồi giải phóng bộ nhớ cũ.
+    async function migrateLegacyImages() {
+      const legacyValue = localStorage.getItem('images');
+      if (!legacyValue) return 0;
+
+      let legacyImages;
+      try {
+        legacyImages = JSON.parse(legacyValue);
+      } catch (error) {
+        return 0;
+      }
+
+      if (!Array.isArray(legacyImages) || !legacyImages.length) {
+        localStorage.removeItem('images');
+        return 0;
+      }
+
+      const blobs = await Promise.all(
+        legacyImages.map(async source => {
+          const response = await fetch(source);
+          return response.blob();
+        })
+      );
+
+      const database = await openDatabase();
+      const transaction = database.transaction(storeName, 'readwrite');
+      const transactionDone = transactionAsPromise(transaction);
+      const imageStore = transaction.objectStore(storeName);
+
+      blobs.forEach((blob, index) => {
+        imageStore.add({
+          blob,
+          name: `Ảnh cũ ${index + 1}`,
+          createdAt: Date.now() + index
+        });
+      });
+
+      await transactionDone;
+      localStorage.removeItem('images');
+      return blobs.length;
+    }
+
+    function extensionFromMimeType(mimeType) {
+      const extensions = {
+        'image/jpeg': '.jpg',
+        'image/png': '.png',
+        'image/gif': '.gif',
+        'image/webp': '.webp',
+        'image/bmp': '.bmp',
+        'image/svg+xml': '.svg',
+        'image/avif': '.avif'
+      };
+      return extensions[mimeType] || '.png';
+    }
+
+    function createStoredFileName(blob, originalName, index) {
+      const name = originalName || 'anh';
+      const extensionMatch = name.match(/\.[a-zA-Z0-9]{2,6}$/);
+      const extension = extensionMatch ? extensionMatch[0].toLowerCase() : extensionFromMimeType(blob.type);
+      const baseName = name
+        .replace(/\.[a-zA-Z0-9]{2,6}$/, '')
+        .replace(/[<>:"/\\|?*\u0000-\u001F]/g, '_')
+        .trim()
+        .slice(0, 70) || 'anh';
+      const timestamp = new Date().toISOString().replace(/\D/g, '').slice(0, 14);
+      const randomPart = typeof crypto.randomUUID === 'function'
+        ? crypto.randomUUID().slice(0, 8)
+        : Math.random().toString(36).slice(2, 10);
+
+      return `${timestamp}_${index + 1}_${randomPart}_${baseName}${extension}`;
+    }
+
+    async function writeBlobToDirectory(blob, originalName, index) {
+      const storedName = createStoredFileName(blob, originalName, index);
+      const fileHandle = await activeDirectoryHandle.getFileHandle(storedName, { create: true });
+      const writable = await fileHandle.createWritable();
+
+      try {
+        await writable.write(blob);
+        await writable.close();
+      } catch (error) {
+        try {
+          await writable.abort();
+        } catch (abortError) {
+          // Không cần xử lý thêm nếu luồng ghi đã tự đóng.
+        }
+        throw error;
+      }
+    }
+
+    async function saveFilesToDirectory(files) {
+      for (let index = 0; index < files.length; index += 1) {
+        await writeBlobToDirectory(files[index], files[index].name, index);
+      }
+    }
+
+    async function clearBrowserImages() {
+      const database = await openDatabase();
+      const transaction = database.transaction(storeName, 'readwrite');
+      const transactionDone = transactionAsPromise(transaction);
+      transaction.objectStore(storeName).clear();
+      await transactionDone;
+    }
+
+    async function migrateBrowserImagesToDirectory() {
+      if (!activeDirectoryHandle) return 0;
+
+      const images = await getBrowserImages();
+      if (!images.length) return 0;
+
+      for (let index = 0; index < images.length; index += 1) {
+        const image = images[index];
+        await writeBlobToDirectory(image.blob, image.name || `anh-cu-${index + 1}`, index);
+      }
+
+      await clearBrowserImages();
+      return images.length;
+    }
+
+    async function saveFilesToBrowser(files) {
+      const database = await openDatabase();
+      const transaction = database.transaction(storeName, 'readwrite');
+      const transactionDone = transactionAsPromise(transaction);
+      const imageStore = transaction.objectStore(storeName);
+
+      files.forEach((file, index) => {
+        imageStore.add({
+          blob: file,
+          name: file.name || `Ảnh ${Date.now() + index}`,
+          createdAt: Date.now() + index
+        });
+      });
+
+      await transactionDone;
+    }
+
+    // Dùng chung cho ảnh được chọn từ máy và ảnh dán từ clipboard.
+    async function saveImageFiles(fileList) {
+      const files = Array.from(fileList).filter(file => file.type.startsWith('image/'));
+      if (!files.length) {
+        showStatus('Clipboard hoặc tệp đã chọn không có ảnh.', 'error');
+        return;
+      }
+
+      try {
+        await initializationPromise;
+        showStatus(`Đang lưu ${files.length} ảnh...`);
+
+        if (activeDirectoryHandle) {
+          const canWrite = await verifyDirectoryPermission(activeDirectoryHandle, true);
+          if (!canWrite) {
+            const permissionError = new Error('Không có quyền ghi vào thư mục.');
+            permissionError.code = 'DIRECTORY_PERMISSION_DENIED';
+            throw permissionError;
+          }
+          await saveFilesToDirectory(files);
+        } else {
+          await saveFilesToBrowser(files);
+        }
+
+        await loadImages();
+        showStatus(
+          activeDirectoryHandle
+            ? `Đã lưu ${files.length} ảnh vào thư mục “${activeDirectoryHandle.name}”.`
+            : `Đã lưu ${files.length} ảnh vào bộ nhớ trình duyệt.`,
+          'success'
+        );
+      } catch (error) {
+        const quotaExceeded = error && (
+          error.name === 'QuotaExceededError' ||
+          error.name === 'NS_ERROR_DOM_QUOTA_REACHED'
+        );
+        showStatus(
+          error && error.code === 'DIRECTORY_PERMISSION_DENIED'
+            ? 'Bạn cần chọn hoặc cấp lại quyền cho thư mục lưu ảnh.'
+            : quotaExceeded
+            ? 'Dung lượng lưu trữ lớn của trình duyệt đã hết. Hãy xóa bớt ảnh rồi thử lại.'
+            : 'Không thể lưu ảnh. Vui lòng kiểm tra dung lượng ổ đĩa và thử lại.',
+          'error'
+        );
+      }
+    }
+
+    chooseFolderButton.addEventListener('click', async () => {
+      if (!('showDirectoryPicker' in window)) return;
+
+      chooseFolderButton.disabled = true;
+      try {
+        const directoryHandle = await window.showDirectoryPicker({
+          id: 'luuanh-image-storage',
+          mode: 'readwrite'
+        });
+
+        if (!await verifyDirectoryPermission(directoryHandle, true)) {
+          const permissionError = new Error('Không có quyền truy cập thư mục.');
+          permissionError.code = 'DIRECTORY_PERMISSION_DENIED';
+          throw permissionError;
+        }
+
+        activeDirectoryHandle = directoryHandle;
+        rememberedDirectoryHandle = directoryHandle;
+        await setSetting('directoryHandle', directoryHandle);
+        showStatus('Đang chuyển ảnh cũ sang thư mục đã chọn...');
+        const migratedCount = await migrateBrowserImagesToDirectory();
+        updateStorageMode();
+        await loadImages();
+        showStatus(
+          migratedCount
+            ? `Đã bật lưu theo ổ cứng và chuyển ${migratedCount} ảnh cũ sang thư mục “${directoryHandle.name}”.`
+            : `Đã bật lưu theo ổ cứng vào thư mục “${directoryHandle.name}”.`,
+          'success'
+        );
+      } catch (error) {
+        if (error.name === 'AbortError') {
+          showStatus('Bạn chưa chọn thư mục lưu ảnh.');
+        } else {
+          showStatus('Không thể mở thư mục. Hãy cấp quyền đọc và ghi rồi thử lại.', 'error');
+        }
+      } finally {
+        updateStorageMode();
+      }
+    });
+
+    // Xử lý ảnh chọn từ máy.
+    document.getElementById('uploadForm').addEventListener('submit', async function (e) {
+      e.preventDefault();
+      if (!fileInput.files.length) {
+        showStatus('Hãy chọn ít nhất một ảnh.', 'error');
+        return;
+      }
+      await saveImageFiles(fileInput.files);
+      fileInput.value = '';
+    });
+
+    // Bấm vào vùng dán vẫn có thể mở hộp chọn tệp như bình thường.
+    pasteZone.addEventListener('click', () => fileInput.click());
+    pasteZone.addEventListener('keydown', event => {
+      if (event.key === 'Enter' || event.key === ' ') {
+        event.preventDefault();
+        fileInput.click();
+      }
+    });
+
+    // Cho phép dán ảnh ở bất kỳ vị trí nào trên trang bằng Ctrl+V.
+    document.addEventListener('paste', async event => {
+      const clipboardData = event.clipboardData;
+      if (!clipboardData) return;
+
+      const imageFiles = Array.from(clipboardData.items || [])
+        .filter(item => item.kind === 'file' && item.type.startsWith('image/'))
+        .map(item => item.getAsFile())
+        .filter(Boolean);
+
+      if (!imageFiles.length) return;
+
+      event.preventDefault();
+      pasteZone.classList.add('is-pasting');
+      await saveImageFiles(imageFiles);
+      pasteZone.classList.remove('is-pasting');
+    });
+
+    async function initializeGallery() {
+      try {
+        const migratedLegacyCount = await migrateLegacyImages();
+        rememberedDirectoryHandle = await getSetting('directoryHandle');
+
+        if (rememberedDirectoryHandle && await verifyDirectoryPermission(rememberedDirectoryHandle, false)) {
+          activeDirectoryHandle = rememberedDirectoryHandle;
+        }
+
+        let movedToDirectoryCount = 0;
+        if (activeDirectoryHandle) {
+          movedToDirectoryCount = await migrateBrowserImagesToDirectory();
+        }
+
+        updateStorageMode();
+        await loadImages();
+
+        if (movedToDirectoryCount) {
+          showStatus(`Đã chuyển ${movedToDirectoryCount} ảnh cũ sang thư mục “${activeDirectoryHandle.name}”.`, 'success');
+        } else if (migratedLegacyCount) {
+          showStatus(`Đã chuyển ${migratedLegacyCount} ảnh cũ sang bộ nhớ mới.`, 'success');
+        }
+      } catch (error) {
+        showStatus('Không thể mở kho ảnh trên trình duyệt này.', 'error');
+      }
+    }
+
+    updateStorageMode();
+    initializationPromise = initializeGallery();
+  </script>
+</body>
+</html>
